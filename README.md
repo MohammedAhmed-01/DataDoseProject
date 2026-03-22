@@ -1,32 +1,34 @@
 # Pharmaceutical Data Intelligence Pipeline
 
-Validate, enrich, and standardize drug product data — from raw noisy CSVs to FDA-confirmed, Egypt-market-aware brand intelligence.
+Turn messy drug product CSVs into validated, FDA-enriched, Egypt-market-aware datasets.
 
 ---
 
-## What This Does
+## What this does
 
-This pipeline takes messy pharmaceutical product records and produces clean, validated, analytics-ready datasets. It handles two complementary workflows:
+Raw pharmaceutical records are noisy. Trade names arrive with pack sizes, dosage form tokens, and random numeric prefixes baked in. Active ingredients aren't canonicalized. Nothing is verified against anything.
 
-**API / Ingredient Intelligence** — validates active ingredients against WHO INN standards, enriches them with OpenFDA label data, and outputs only FDA-confirmed APIs.
+This pipeline fixes that. Two workflows, run independently or together:
 
-**Tradename Intelligence** — deep-cleans brand names (preserving concentration values), validates them as real trade names vs. generics, and adds Egypt-market context.
+**Ingredient intelligence** — splits combination APIs, validates each against WHO INN standards, queries OpenFDA for label data (brand names, warnings, adverse reactions), and keeps only what's confirmed by both Groq and FDA.
+
+**Tradename intelligence** — strips noise from brand names while keeping the concentrations (e.g., `500mg`, `0.5%`), validates them as real trade names vs. generics, and adds Egypt-specific market context including local manufacturer data.
 
 ---
 
 ## Features
 
-- Normalizes dosage forms into controlled categories (`oral_solid`, `injection`, `topical`, etc.)
-- Validates ingredients via local rules first, then Groq LLM fallback
-- Enriches confirmed APIs with brand names, warnings, interactions, and adverse reactions from OpenFDA
-- Cleans trade names using regex while preserving concentrations (e.g., `500mg`, `100mg/ml`, `0.5%`)
-- Validates brand names in Egypt market context with manufacturer identification
-- Multi-worker execution with resume support and append-only, order-safe output
-- Automatic API key rotation and rate-limit resilience
+- Dosage form normalization into controlled categories (`oral_solid`, `injection`, `topical`, and others)
+- Ingredient validation via local rules, with Groq LLM as fallback
+- OpenFDA enrichment: brand names, warnings, drug interactions, adverse reactions
+- Regex-based trade name cleaning that preserves concentrations and discards everything else
+- Egypt-market brand validation with manufacturer identification
+- Multi-worker execution with resume support and order-safe, append-only output
+- Automatic API key rotation and rate-limit handling baked in
 
 ---
 
-## Quick Start
+## Quick start
 
 ### 1. Set your API keys
 
@@ -37,7 +39,7 @@ export OPENFDA_API_KEY="your_openfda_key"
 
 > ⚠️ Never commit API keys to source control.
 
-### 2. Run the FDA enrichment pipeline
+### 2. Run FDA enrichment
 
 ```python
 from fda_enrichment_pipeline import run_full_pipeline
@@ -45,7 +47,7 @@ from fda_enrichment_pipeline import run_full_pipeline
 run_full_pipeline()
 ```
 
-### 3. Run the tradename pipeline
+### 3. Run tradename cleaning
 
 ```python
 from tradename_cleaning_pipeline_v5 import run_full_pipeline
@@ -61,26 +63,26 @@ run_full_pipeline(
 
 ---
 
-## Pipeline Workflows
+## How the pipelines work
 
-### Workflow 1 — Ingredient & FDA Enrichment
+### Ingredient & FDA enrichment
 
 ```
 Raw CSV
   → Form normalization
-  → Ingredient extraction & splitting (e.g., "A + B + C" → ["A", "B", "C"])
+  → Ingredient extraction & splitting ("A + B + C" → ["A", "B", "C"])
   → Local validation → Groq LLM validation
   → OpenFDA enrichment (brand names, warnings, interactions, adverse reactions)
   → Filter: is_drug=true AND fda_found=true
   → confirmed_drugs.json / confirmed_drugs.csv
 ```
 
-### Workflow 2 — Tradename Intelligence
+### Tradename intelligence
 
 ```
 Raw tradename column
   → Regex deep clean (keep brand + concentration, strip form/pack tokens)
-  → Groq validation Round 1: trade name vs. generic, casing fix, Egypt presence estimate
+  → Groq Round 1: trade name vs. generic, casing fix, Egypt presence estimate
   → Round 2 (low-confidence trigger): verification pass
   → Round 3 (Egypt confirm): final market presence check
   → Append-only output: dataset_with_validated_tradenames.csv
@@ -92,7 +94,7 @@ Raw tradename column
 
 ### Distributed execution (multi-worker)
 
-Split large datasets across workers by row range:
+Large datasets can be split across workers by row range:
 
 ```python
 # Worker 1: rows 1–1500
@@ -123,7 +125,9 @@ from fda_enrichment_pipeline import filter_confirmed_drugs
 filter_confirmed_drugs()
 ```
 
-### Validate tradename output ordering (recommended before a run)
+### Validate tradename output ordering
+
+Run this before starting a tradename job. It confirms your worker split won't scramble row order:
 
 ```python
 from tradename_cleaning_pipeline_v5 import test_order
@@ -132,9 +136,7 @@ test_order()
 
 ---
 
-## Input Schema
-
-Your input CSV must contain these columns:
+## Input schema
 
 | Column | Type | Description |
 |---|---|---|
@@ -152,18 +154,18 @@ Your input CSV must contain these columns:
 
 ---
 
-## Output Files
+## Output files
 
 | File | Description |
 |---|---|
 | `ingredients_fda_results.json` | All validated ingredients with FDA enrichment |
-| `ingredients_fda_results.csv` | Same data, tabular format |
-| `confirmed_drugs.json` | Subset where `is_drug=true` AND `fda_found=true` |
+| `ingredients_fda_results.csv` | Same data, tabular |
+| `confirmed_drugs.json` | Only ingredients where `is_drug=true` AND `fda_found=true` |
 | `confirmed_drugs.csv` | Same, tabular |
-| `dataset_with_validated_tradenames.csv` | Original rows + tradename enrichment columns (confirmed brands only) |
-| `tradenames_validated.json` | Tradename validation results per product |
+| `dataset_with_validated_tradenames.csv` | Original rows + tradename columns (confirmed brands only, original order preserved) |
+| `tradenames_validated.json` | Per-product tradename validation results |
 
-### Enriched ingredient record (JSON)
+### Enriched ingredient record
 
 ```json
 {
@@ -179,11 +181,11 @@ Your input CSV must contain these columns:
 }
 ```
 
-### Tradename enrichment columns (added to output CSV)
+### Tradename enrichment columns
 
 | Column | Type | Description |
 |---|---|---|
-| `tradename_cleaned` | string | Brand + concentration only (noise removed) |
+| `tradename_cleaned` | string | Brand + concentration only (noise stripped) |
 | `tradename_corrected` | string | Spelling/casing-corrected brand name |
 | `tradename_is_valid` | bool | Confirmed as a real trade/brand name |
 | `tradename_is_generic` | bool | Detected as a generic/INN name |
@@ -197,9 +199,7 @@ Your input CSV must contain these columns:
 
 ---
 
-## Form Normalization Reference
-
-Raw dosage form strings are standardized into these categories:
+## Form normalization reference
 
 | Category | Includes |
 |---|---|
@@ -211,9 +211,9 @@ Raw dosage form strings are standardized into these categories:
 
 ---
 
-## Tradename Cleaning Examples
+## Tradename cleaning examples
 
-The regex cleaner preserves the brand name and concentration while stripping everything else:
+The cleaner keeps the brand name and concentration. Everything else — form tokens, pack sizes, number words — gets stripped. If nothing valid remains, the row is discarded.
 
 | Input | Output |
 |---|---|
@@ -226,43 +226,40 @@ The regex cleaner preserves the brand name and concentration while stripping eve
 
 ## Troubleshooting
 
-### Rate limit errors from Groq or OpenFDA
+### Persistent rate limit failures
 
-The pipeline handles these automatically with retry-after delays and key rotation. If you see persistent failures, increase `groq_delay`:
+The pipeline handles retries and key rotation automatically. If you're still seeing failures, slow down the request cadence:
 
 ```python
 run_full_pipeline(groq_delay=1.0)
 ```
 
-### Output rows appear out of order
+### Output rows are out of order
 
-Run the order validation check before starting:
+Run `test_order()` before splitting workers. Original dataset ordering is guaranteed in all outputs, but the check will catch misconfigurations before they cost you a full run:
 
 ```python
 from tradename_cleaning_pipeline_v5 import test_order
 test_order()
 ```
 
-The pipeline guarantees original dataset ordering in all outputs.
+### Ingredient missing from `confirmed_drugs`
 
-### Ingredient not found in OpenFDA
-
-This is expected for some valid APIs. The ingredient will have `fda_found=false` and will be excluded from `confirmed_drugs` output. Check `ingredients_fda_results.json` for the full record with validation status and confidence score.
+This is normal for valid APIs, especially older generics. The ingredient will have `fda_found=false` and won't appear in the confirmed subset. Check `ingredients_fda_results.json` for the full record — the confidence score and validation notes are there.
 
 ### Worker outputs missing after merge
 
-Ensure all workers completed successfully and their progress files are in the expected directory before calling `merge_progress_files()` or `merge_all_workers()`.
+All workers must finish and save their progress files before you call `merge_progress_files()` or `merge_all_workers()`. Check that each worker's output directory contains a complete progress file before merging.
 
 ---
 
 ## Roadmap
 
 - ATC classification mapping
-- RxNorm integration
-- SNOMED CT alignment
+- RxNorm and SNOMED CT integration
 - WHO Drug Dictionary linking
 - Adverse reaction frequency scoring
-- REST API / microservice wrapper
+- REST API wrapper
 
 ---
 
